@@ -10,6 +10,8 @@ typedef struct {
 	pii_mask_rect_t rects[PII_MASK_MAX_RECTS];
 	uint32_t rect_count;
 	uint32_t flags;
+	uint16_t screen_width;
+	uint16_t screen_height;
 	bool connected;
 	bool stale;
 } pii_mask_reader_t;

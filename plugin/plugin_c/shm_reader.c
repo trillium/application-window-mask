@@ -57,6 +57,8 @@ bool pii_mask_reader_update(pii_mask_reader_t *reader)
 	memcpy(reader->rects, shm->rects, count * sizeof(pii_mask_rect_t));
 	reader->rect_count = count;
 	reader->flags = shm->flags;
+	reader->screen_width = shm->screen_width;
+	reader->screen_height = shm->screen_height;
 
 	/* Validate read wasn't torn */
 	if (!pii_mask_read_valid(shm, seq))

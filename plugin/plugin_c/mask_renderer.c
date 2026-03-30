@@ -40,12 +40,21 @@ void pii_mask_draw_masks(obs_source_t *source,
 		return;
 	}
 
+	/* Scale from screen coords to source coords */
+	float sx = (reader->screen_width > 0)
+		? (float)base_width / reader->screen_width
+		: 1.0f;
+	float sy = (reader->screen_height > 0)
+		? (float)base_height / reader->screen_height
+		: 1.0f;
+
 	/* Draw black rects over unsafe regions */
 	for (uint32_t i = 0; i < reader->rect_count; i++) {
 		const pii_mask_rect_t *r = &reader->rects[i];
 		if (!(r->flags & PII_RECT_FLAG_UNSAFE))
 			continue;
 
-		draw_black_rect(r->x, r->y, r->width, r->height);
+		draw_black_rect(r->x * sx, r->y * sy,
+				r->width * sx, r->height * sy);
 	}
 }
