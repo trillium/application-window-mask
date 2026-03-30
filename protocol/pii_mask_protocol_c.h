@@ -31,7 +31,8 @@ typedef struct {
 	uint32_t rect_count;
 	uint64_t timestamp_ns;
 	uint32_t flags;
-	uint32_t reserved;
+	uint16_t screen_width;   /* logical screen width for coordinate scaling */
+	uint16_t screen_height;  /* logical screen height for coordinate scaling */
 	pii_mask_rect_t rects[PII_MASK_MAX_RECTS];
 } pii_mask_shm_t;
 

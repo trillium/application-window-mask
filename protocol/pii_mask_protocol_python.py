@@ -41,7 +41,8 @@ class PiiMaskShm(ctypes.Structure):
         ("rect_count", ctypes.c_uint32),
         ("timestamp_ns", ctypes.c_uint64),
         ("flags", ctypes.c_uint32),
-        ("reserved", ctypes.c_uint32),
+        ("screen_width", ctypes.c_uint16),
+        ("screen_height", ctypes.c_uint16),
         ("rects", PiiMaskRect * MAX_RECTS),
     ]
 
@@ -58,7 +59,7 @@ class PiiMaskWriter:
         self._mm = None
         self._shm = None
 
-    def open(self):
+    def open(self, screen_width=0, screen_height=0):
         """Create or open the shared memory region."""
         # Use multiprocessing.shared_memory for cross-platform shm_open
         from multiprocessing import shared_memory
@@ -77,6 +78,8 @@ class PiiMaskWriter:
         self._shm.rect_count = 0
         self._shm.timestamp_ns = time.time_ns()
         self._shm.flags = FLAG_DAEMON_ALIVE
+        self._shm.screen_width = screen_width
+        self._shm.screen_height = screen_height
 
     def write_rects(self, rects: list[dict]):
         """
