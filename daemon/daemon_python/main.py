@@ -13,6 +13,7 @@ from shm_writer import ShmWriter
 from window_poller import WindowPoller
 from classifier import Classifier
 from scene_model import SceneModel
+from occlusion import compute_visible_unsafe
 
 
 def main():
@@ -47,28 +48,42 @@ def main():
             # Poll all on-screen windows
             windows = poller.poll()
 
-            # Classify each window
-            rects = []
+            # Classify each window (preserving front-to-back z-order)
+            classified = []
             for w in windows:
-                is_unsafe = classifier.is_unsafe(
-                    owner=w["owner"],
-                    bundle=w.get("bundle", ""),
-                    title=w.get("title", ""),
-                    layer=w["layer"],
-                )
-                if is_unsafe:
-                    rects.append({
-                        "x": w["x"],
-                        "y": w["y"],
-                        "width": w["width"],
-                        "height": w["height"],
-                        "corner_radius": 10.0,
-                        "unsafe": True,
-                    })
+                classified.append({
+                    "x": w["x"],
+                    "y": w["y"],
+                    "width": w["width"],
+                    "height": w["height"],
+                    "unsafe": classifier.is_unsafe(
+                        owner=w["owner"],
+                        bundle=w.get("bundle", ""),
+                        title=w.get("title", ""),
+                        layer=w["layer"],
+                    ),
+                })
 
-            # Update scene model — only write to shm if something changed
+            # Compute visible unsafe regions (z-order aware)
+            visible_unsafe = compute_visible_unsafe(classified)
+
+            rects = [
+                {
+                    "x": r[0],
+                    "y": r[1],
+                    "width": r[2],
+                    "height": r[3],
+                    "corner_radius": 0.0,
+                    "unsafe": True,
+                }
+                for r in visible_unsafe
+            ]
+
+            # Update scene model — write to shm if changed, or heartbeat
             if model.update(rects):
                 writer.write_rects(rects)
+            else:
+                writer.heartbeat()
 
             # Sleep for remainder of poll interval
             elapsed = time.monotonic() - loop_start
