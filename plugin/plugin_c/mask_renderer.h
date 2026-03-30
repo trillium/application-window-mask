@@ -2,21 +2,28 @@
 #define PII_MASK_RENDERER_H
 
 #include "shm_reader.h"
+#include "rect_texture.h"
 #include <obs-module.h>
 
 /*
- * Render mask rects over the current video frame.
+ * Composite clear and obfuscated textures using SDF mask rects.
  *
- * For each unsafe rect in the reader's data, draws a solid black
- * rectangle at the given position. The source is the parent source
- * being filtered.
+ * Uses a custom effect shader that evaluates SDF rounded rects
+ * from the rect data texture. Unsafe regions show obfuscated,
+ * safe regions show clear.
  *
- * If full_mask is true, blacks out the entire frame.
+ * If full_mask is true, draws the obfuscated texture over the
+ * entire frame (fail-safe). If effect is NULL, falls back to
+ * drawing the clear texture with black rect overlays.
  */
-void pii_mask_draw_masks(obs_source_t *source,
-		     const pii_mask_reader_t *reader,
-		     bool full_mask,
-		     uint32_t base_width,
-		     uint32_t base_height);
+void pii_mask_composite(gs_texture_t *clear_tex,
+			gs_texture_t *obfuscated_tex,
+			gs_effect_t *effect,
+			const pii_mask_reader_t *reader,
+			const pii_rect_texture_t *rect_tex,
+			bool full_mask,
+			uint32_t base_width,
+			uint32_t base_height,
+			float feather);
 
 #endif /* PII_MASK_RENDERER_H */
