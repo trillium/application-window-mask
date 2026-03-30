@@ -87,7 +87,7 @@ static void pii_mask_render(void *data, gs_effect_t *effect)
 			 f->reader.stale ||
 			 (f->reader.flags & PII_MASK_FLAG_FULL_MASK);
 
-	pii_mask_render(f->source, &f->reader, full_mask, width, height);
+	pii_mask_draw_masks(f->source, &f->reader, full_mask, width, height);
 }
 
 static struct obs_source_info pii_mask_filter_info = {

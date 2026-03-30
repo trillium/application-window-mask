@@ -13,7 +13,7 @@
  *
  * If full_mask is true, blacks out the entire frame.
  */
-void pii_mask_render(obs_source_t *source,
+void pii_mask_draw_masks(obs_source_t *source,
 		     const pii_mask_reader_t *reader,
 		     bool full_mask,
 		     uint32_t base_width,
