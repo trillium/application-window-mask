@@ -118,11 +118,18 @@ class PiiMaskWriter:
         shm.flags = FLAG_DAEMON_ALIVE | FLAG_FULL_MASK
         shm.sequence = seq + 2
 
+    def heartbeat(self):
+        """Update timestamp without changing data, so plugin knows daemon is alive."""
+        if self._shm:
+            self._shm.timestamp_ns = time.time_ns()
+
     def close(self):
-        """Clean up shared memory."""
+        """Mark daemon as not alive. Does NOT unlink shm — the segment
+        persists so the plugin's mmap stays valid across daemon restarts.
+        The plugin detects staleness via timestamp and renders full mask."""
         if self._shm:
             self._shm.flags = 0  # clear daemon alive
             self._shm = None
         if self._sm:
-            self._sm.unlink()
             self._sm.close()
+            self._sm = None

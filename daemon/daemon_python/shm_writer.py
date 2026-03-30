@@ -26,5 +26,8 @@ class ShmWriter:
     def write_full_mask(self):
         self._writer.write_full_mask()
 
+    def heartbeat(self):
+        self._writer.heartbeat()
+
     def close(self):
         self._writer.close()
