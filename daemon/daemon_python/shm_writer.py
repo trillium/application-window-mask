@@ -17,8 +17,8 @@ class ShmWriter:
     def __init__(self):
         self._writer = PiiMaskWriter()
 
-    def open(self):
-        self._writer.open()
+    def open(self, screen_width=0, screen_height=0):
+        self._writer.open(screen_width=screen_width, screen_height=screen_height)
 
     def write_rects(self, rects: list[dict]):
         self._writer.write_rects(rects)

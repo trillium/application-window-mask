@@ -25,7 +25,14 @@ def main():
     model = SceneModel()
     writer = ShmWriter()
 
-    writer.open()
+    # Get screen dimensions for coordinate scaling
+    from Quartz import CGMainDisplayID, CGDisplayPixelsWide, CGDisplayPixelsHigh
+    display_id = CGMainDisplayID()
+    screen_w = CGDisplayPixelsWide(display_id)
+    screen_h = CGDisplayPixelsHigh(display_id)
+
+    writer.open(screen_width=screen_w, screen_height=screen_h)
+    print(f"Screen: {screen_w}x{screen_h}")
 
     # Fail-safe: start fully masked
     writer.write_full_mask()
@@ -49,8 +56,12 @@ def main():
             windows = poller.poll()
 
             # Classify each window (preserving front-to-back z-order)
+            # Skip overlay layers (layer != 0) from occlusion — they're
+            # transparent and don't actually hide content beneath them.
             classified = []
             for w in windows:
+                if w["layer"] != 0:
+                    continue
                 classified.append({
                     "x": w["x"],
                     "y": w["y"],
@@ -67,17 +78,27 @@ def main():
             # Compute visible unsafe regions (z-order aware)
             visible_unsafe = compute_visible_unsafe(classified)
 
-            rects = [
-                {
-                    "x": r[0],
-                    "y": r[1],
-                    "width": r[2],
-                    "height": r[3],
+            # Clip to screen bounds and drop off-screen/tiny rects
+            rects = []
+            for r in visible_unsafe:
+                x, y, w, h = r
+                # Clip to screen (0,0)
+                if x < 0:
+                    w += x
+                    x = 0
+                if y < 0:
+                    h += y
+                    y = 0
+                if w <= 1 or h <= 1:
+                    continue
+                rects.append({
+                    "x": x,
+                    "y": y,
+                    "width": w,
+                    "height": h,
                     "corner_radius": 0.0,
                     "unsafe": True,
-                }
-                for r in visible_unsafe
-            ]
+                })
 
             # Update scene model — write to shm if changed, or heartbeat
             if model.update(rects):
