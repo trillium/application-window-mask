@@ -48,16 +48,25 @@ def main():
 
     print(f"pii_mask daemon started (polling at {poll_hz}Hz)")
 
+    # Benchmark accumulators
+    bench_frame = 0
+    bench_interval = 300  # log every 300 frames (~10s)
+    bench_times = {"poll": [], "classify": [], "occlusion": [],
+                   "clip": [], "write": [], "total": []}
+
     try:
         while running:
-            loop_start = time.monotonic()
+            loop_start = time.perf_counter()
 
             # Poll all on-screen windows
+            t0 = time.perf_counter()
             windows = poller.poll()
+            t_poll = time.perf_counter() - t0
 
             # Classify each window (preserving front-to-back z-order)
             # Skip overlay layers (layer != 0) from occlusion — they're
             # transparent and don't actually hide content beneath them.
+            t0 = time.perf_counter()
             classified = []
             for w in windows:
                 if w["layer"] != 0:
@@ -74,11 +83,15 @@ def main():
                         layer=w["layer"],
                     ),
                 })
+            t_classify = time.perf_counter() - t0
 
             # Compute visible unsafe regions (z-order aware)
+            t0 = time.perf_counter()
             visible_unsafe = compute_visible_unsafe(classified)
+            t_occlusion = time.perf_counter() - t0
 
             # Clip to screen bounds and drop off-screen/tiny rects
+            t0 = time.perf_counter()
             rects = []
             for r in visible_unsafe:
                 x, y, w, h = r
@@ -99,12 +112,43 @@ def main():
                     "corner_radius": 0.0,
                     "unsafe": True,
                 })
+            t_clip = time.perf_counter() - t0
 
             # Update scene model — write to shm if changed, or heartbeat
+            t0 = time.perf_counter()
             if model.update(rects):
                 writer.write_rects(rects)
             else:
                 writer.heartbeat()
+            t_write = time.perf_counter() - t0
+
+            t_total = time.perf_counter() - loop_start
+
+            # Accumulate benchmark data
+            bench_times["poll"].append(t_poll)
+            bench_times["classify"].append(t_classify)
+            bench_times["occlusion"].append(t_occlusion)
+            bench_times["clip"].append(t_clip)
+            bench_times["write"].append(t_write)
+            bench_times["total"].append(t_total)
+            bench_frame += 1
+
+            if bench_frame >= bench_interval:
+                for key in bench_times:
+                    vals = sorted(bench_times[key])
+                    n = len(vals)
+                    p50 = vals[n // 2] * 1000
+                    p99 = vals[int(n * 0.99)] * 1000
+                    avg = sum(vals) / n * 1000
+                    print(f"  BENCH {key:>10s}: "
+                          f"avg={avg:.3f}ms  "
+                          f"p50={p50:.3f}ms  "
+                          f"p99={p99:.3f}ms")
+                print(f"  BENCH windows={len(windows)} "
+                      f"classified={len(classified)} "
+                      f"rects={len(rects)}")
+                bench_times = {k: [] for k in bench_times}
+                bench_frame = 0
 
             # Sleep for remainder of poll interval
             elapsed = time.monotonic() - loop_start
