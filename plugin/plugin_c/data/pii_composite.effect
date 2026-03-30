@@ -1,0 +1,119 @@
+/* PII Mask SDF composite shader.
+ *
+ * Composites clear and obfuscated textures using SDF rounded-rect
+ * masks read from a 1D rect data texture.
+ *
+ * Rect data texture layout (GS_RGBA32F, width = MAX_RECTS * 2):
+ *   texel[i*2+0] = (x, y, width, height)  -- source coords
+ *   texel[i*2+1] = (corner_radius, flags, 0, 0)
+ *
+ * Flag bit 0 (1) = PII_RECT_FLAG_UNSAFE
+ */
+
+uniform float4x4 ViewProj;
+uniform texture2d image;              /* clear frame */
+uniform texture2d image_obfuscated;   /* blurred/pixelated/solid */
+uniform texture2d rect_data;          /* 1D rect params */
+uniform int num_rects;
+uniform float2 resolution;            /* source dimensions in pixels */
+uniform float feather;                /* edge softness in pixels */
+
+sampler_state linear_clamp {
+	Filter   = Linear;
+	AddressU = Clamp;
+	AddressV = Clamp;
+};
+
+sampler_state point_clamp {
+	Filter   = Point;
+	AddressU = Clamp;
+	AddressV = Clamp;
+};
+
+struct VertIn {
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+struct VertOut {
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+VertOut VSDefault(VertIn v)
+{
+	VertOut o;
+	o.pos = mul(float4(v.pos.xyz, 1.0), ViewProj);
+	o.uv  = v.uv;
+	return o;
+}
+
+/* IQ's signed distance for a rounded rectangle.
+ * p = point relative to rect center
+ * b = half-extents (half_width, half_height)
+ * r = corner radius */
+float sd_rounded_rect(float2 p, float2 b, float r)
+{
+	float2 q = abs(p) - b + float2(r, r);
+	return min(max(q.x, q.y), 0.0) + length(max(q, float2(0.0, 0.0))) - r;
+}
+
+float4 PSComposite(VertOut v) : TARGET
+{
+	float4 clear = image.Sample(linear_clamp, v.uv);
+	float4 obfuscated = image_obfuscated.Sample(linear_clamp, v.uv);
+
+	/* Pixel position in source coords */
+	float2 px = v.uv * resolution;
+
+	float mask_alpha = 0.0;
+
+	/* Evaluate SDF for each rect */
+	for (int i = 0; i < 32; i++) {
+		if (i >= num_rects)
+			break;
+
+		/* Sample rect geometry from 1D texture */
+		float tex_width = 64.0; /* MAX_RECTS * 2 */
+		float u0 = ((float)(i * 2) + 0.5) / tex_width;
+		float u1 = ((float)(i * 2 + 1) + 0.5) / tex_width;
+
+		float4 geom = rect_data.Sample(point_clamp, float2(u0, 0.5));
+		float4 params = rect_data.Sample(point_clamp, float2(u1, 0.5));
+
+		float rx = geom.x;
+		float ry = geom.y;
+		float rw = geom.z;
+		float rh = geom.w;
+		float radius = params.x;
+		float flags = params.y;
+
+		/* Skip non-unsafe rects */
+		if (flags < 0.5)
+			continue;
+
+		/* SDF evaluation */
+		float2 center = float2(rx + rw * 0.5, ry + rh * 0.5);
+		float2 half_ext = float2(rw * 0.5, rh * 0.5);
+		float r = min(radius, min(half_ext.x, half_ext.y));
+
+		float d = sd_rounded_rect(px - center, half_ext, r);
+
+		/* Smoothstep AA: inside = 1, outside = 0 */
+		float f = max(feather, 1.0);
+		float a = 1.0 - smoothstep(-f, f, d);
+
+		mask_alpha = max(mask_alpha, a);
+	}
+
+	return lerp(clear, obfuscated, mask_alpha);
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v);
+		pixel_shader  = PSComposite(v);
+	}
+}

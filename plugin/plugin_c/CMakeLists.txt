@@ -15,6 +15,7 @@ add_library(pii-mask-filter MODULE
     pii_mask_filter.c
     shm_reader.c
     mask_renderer.c
+    rect_texture.c
 )
 
 target_include_directories(pii-mask-filter PRIVATE
@@ -32,6 +33,15 @@ if(APPLE)
         MACOSX_BUNDLE_GUI_IDENTIFIER com.piimask.obs-filter
         MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
     )
+
+    # Copy data files into bundle Resources
+    set(EFFECT_FILES
+        ${CMAKE_CURRENT_SOURCE_DIR}/data/pii_composite.effect
+    )
+    set_source_files_properties(${EFFECT_FILES} PROPERTIES
+        MACOSX_PACKAGE_LOCATION "Resources/data"
+    )
+    target_sources(pii-mask-filter PRIVATE ${EFFECT_FILES})
 endif()
 
 # Install to OBS plugin directory
