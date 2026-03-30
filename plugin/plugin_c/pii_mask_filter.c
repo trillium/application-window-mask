@@ -1,4 +1,5 @@
 #include <obs-module.h>
+#include <util/platform.h>
 #include "shm_reader.h"
 #include "mask_renderer.h"
 #include "rect_texture.h"
@@ -18,6 +19,17 @@ enum obfuscation_method {
 	OBF_PIXELATE = 2,
 };
 
+/* Benchmark: log interval in frames */
+#define BENCH_INTERVAL 300
+
+struct pii_bench {
+	uint64_t capture_ns;
+	uint64_t obfuscate_ns;
+	uint64_t rect_upload_ns;
+	uint64_t composite_ns;
+	uint64_t total_ns;
+};
+
 struct pii_mask_filter {
 	obs_source_t *source;
 	pii_mask_reader_t reader;
@@ -35,6 +47,11 @@ struct pii_mask_filter {
 	float pixel_block_size;
 	uint32_t cx;
 	uint32_t cy;
+
+	/* Benchmark state */
+	struct pii_bench bench_accum;
+	struct pii_bench bench_max;
+	int bench_frame;
 };
 
 static const char *pii_mask_get_name(void *unused)
@@ -275,6 +292,30 @@ static gs_texture_t *render_obfuscated(struct pii_mask_filter *f,
 	return gs_texrender_get_texture(f->texrender_obfuscated);
 }
 
+static void bench_log(struct pii_mask_filter *f)
+{
+	int n = BENCH_INTERVAL;
+	blog(LOG_INFO,
+	     "[pii-mask] BENCH avg(us): capture=%llu obf=%llu "
+	     "rect_upload=%llu composite=%llu total=%llu | "
+	     "max(us): capture=%llu obf=%llu composite=%llu total=%llu | "
+	     "rects=%u method=%d",
+	     (unsigned long long)(f->bench_accum.capture_ns / n / 1000),
+	     (unsigned long long)(f->bench_accum.obfuscate_ns / n / 1000),
+	     (unsigned long long)(f->bench_accum.rect_upload_ns / n / 1000),
+	     (unsigned long long)(f->bench_accum.composite_ns / n / 1000),
+	     (unsigned long long)(f->bench_accum.total_ns / n / 1000),
+	     (unsigned long long)(f->bench_max.capture_ns / 1000),
+	     (unsigned long long)(f->bench_max.obfuscate_ns / 1000),
+	     (unsigned long long)(f->bench_max.composite_ns / 1000),
+	     (unsigned long long)(f->bench_max.total_ns / 1000),
+	     f->reader.rect_count,
+	     (int)f->method);
+	memset(&f->bench_accum, 0, sizeof(f->bench_accum));
+	memset(&f->bench_max, 0, sizeof(f->bench_max));
+	f->bench_frame = 0;
+}
+
 static void pii_mask_render(void *data, gs_effect_t *effect)
 {
 	UNUSED_PARAMETER(effect);
@@ -297,7 +338,11 @@ static void pii_mask_render(void *data, gs_effect_t *effect)
 			 f->force_full_mask ||
 			 (f->reader.flags & PII_MASK_FLAG_FULL_MASK);
 
+	uint64_t t0, t1;
+	uint64_t t_total_start = os_gettime_ns();
+
 	/* Pass 1: Capture clear frame */
+	t0 = os_gettime_ns();
 	gs_texrender_reset(f->texrender_clear);
 
 	gs_blend_state_push();
@@ -314,6 +359,8 @@ static void pii_mask_render(void *data, gs_effect_t *effect)
 	}
 
 	gs_blend_state_pop();
+	t1 = os_gettime_ns();
+	uint64_t t_capture = t1 - t0;
 
 	gs_texture_t *clear_tex =
 		gs_texrender_get_texture(f->texrender_clear);
@@ -321,20 +368,51 @@ static void pii_mask_render(void *data, gs_effect_t *effect)
 		return;
 
 	/* Pass 2: Render obfuscated frame */
+	t0 = os_gettime_ns();
 	gs_texture_t *obf_tex =
 		render_obfuscated(f, clear_tex, width, height);
+	t1 = os_gettime_ns();
+	uint64_t t_obfuscate = t1 - t0;
 
 	/* Update rect data texture */
+	t0 = os_gettime_ns();
 	float sx = (f->reader.screen_width > 0)
 		? (float)width / f->reader.screen_width : 1.0f;
 	float sy = (f->reader.screen_height > 0)
 		? (float)height / f->reader.screen_height : 1.0f;
 	pii_rect_texture_update(&f->rect_tex, &f->reader, sx, sy);
+	t1 = os_gettime_ns();
+	uint64_t t_rect_upload = t1 - t0;
 
 	/* Pass 3: SDF composite */
+	t0 = os_gettime_ns();
 	pii_mask_composite(clear_tex, obf_tex, f->effect_composite,
 			   &f->reader, &f->rect_tex, full_mask,
 			   width, height, f->feather);
+	t1 = os_gettime_ns();
+	uint64_t t_composite = t1 - t0;
+
+	uint64_t t_total = os_gettime_ns() - t_total_start;
+
+	/* Accumulate benchmarks */
+	f->bench_accum.capture_ns += t_capture;
+	f->bench_accum.obfuscate_ns += t_obfuscate;
+	f->bench_accum.rect_upload_ns += t_rect_upload;
+	f->bench_accum.composite_ns += t_composite;
+	f->bench_accum.total_ns += t_total;
+
+	if (t_capture > f->bench_max.capture_ns)
+		f->bench_max.capture_ns = t_capture;
+	if (t_obfuscate > f->bench_max.obfuscate_ns)
+		f->bench_max.obfuscate_ns = t_obfuscate;
+	if (t_composite > f->bench_max.composite_ns)
+		f->bench_max.composite_ns = t_composite;
+	if (t_total > f->bench_max.total_ns)
+		f->bench_max.total_ns = t_total;
+
+	f->bench_frame++;
+	if (f->bench_frame >= BENCH_INTERVAL)
+		bench_log(f);
 }
 
 static struct obs_source_info pii_mask_filter_info = {
