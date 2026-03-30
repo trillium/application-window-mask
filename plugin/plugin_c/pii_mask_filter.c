@@ -65,20 +65,28 @@ static void *pii_mask_create(obs_data_t *settings, obs_source_t *source)
 	char *path;
 
 	path = obs_module_file("pii_composite.effect");
+	blog(LOG_INFO, "[pii-mask] composite effect path: %s",
+	     path ? path : "(null)");
 	if (path) {
 		obs_enter_graphics();
 		f->effect_composite =
 			gs_effect_create_from_file(path, NULL);
 		obs_leave_graphics();
+		blog(LOG_INFO, "[pii-mask] composite effect loaded: %s",
+		     f->effect_composite ? "yes" : "NO");
 		bfree(path);
 	}
 
 	path = obs_module_file("pixelate.effect");
+	blog(LOG_INFO, "[pii-mask] pixelate effect path: %s",
+	     path ? path : "(null)");
 	if (path) {
 		obs_enter_graphics();
 		f->effect_pixelate =
 			gs_effect_create_from_file(path, NULL);
 		obs_leave_graphics();
+		blog(LOG_INFO, "[pii-mask] pixelate effect loaded: %s",
+		     f->effect_pixelate ? "yes" : "NO");
 		bfree(path);
 	}
 
@@ -86,8 +94,10 @@ static void *pii_mask_create(obs_data_t *settings, obs_source_t *source)
 	f->texrender_clear = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
 	f->texrender_obfuscated = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
 	pii_rect_texture_create(&f->rect_tex);
-	pii_blur_create(&f->blur, 5);
+	bool blur_ok = pii_blur_create(&f->blur, 5);
 	obs_leave_graphics();
+	blog(LOG_INFO, "[pii-mask] blur created: %s (levels=%d)",
+	     blur_ok ? "yes" : "NO", f->blur.levels);
 
 	pii_mask_reader_open(&f->reader);
 	pii_mask_update(f, settings);
