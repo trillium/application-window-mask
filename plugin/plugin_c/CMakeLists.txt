@@ -16,6 +16,7 @@ add_library(pii-mask-filter MODULE
     shm_reader.c
     mask_renderer.c
     rect_texture.c
+    blur_kawase.c
 )
 
 target_include_directories(pii-mask-filter PRIVATE
@@ -37,6 +38,9 @@ if(APPLE)
     # Copy data files into bundle Resources
     set(EFFECT_FILES
         ${CMAKE_CURRENT_SOURCE_DIR}/data/pii_composite.effect
+        ${CMAKE_CURRENT_SOURCE_DIR}/data/dual_kawase_down.effect
+        ${CMAKE_CURRENT_SOURCE_DIR}/data/dual_kawase_up.effect
+        ${CMAKE_CURRENT_SOURCE_DIR}/data/pixelate.effect
     )
     set_source_files_properties(${EFFECT_FILES} PROPERTIES
         MACOSX_PACKAGE_LOCATION "Resources/data"
