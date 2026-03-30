@@ -3,7 +3,11 @@ project(pii-mask-filter VERSION 0.1.0)
 
 set(CMAKE_C_STANDARD 11)
 
-# Find OBS
+# OBS SDK from obs-aitum-multistream deps
+set(OBS_DEPS_DIR "$ENV{HOME}/code/obs-aitum-multistream/.deps")
+list(APPEND CMAKE_PREFIX_PATH "${OBS_DEPS_DIR}")
+list(APPEND CMAKE_FRAMEWORK_PATH "${OBS_DEPS_DIR}/Frameworks")
+
 find_package(libobs REQUIRED)
 
 # Plugin target
