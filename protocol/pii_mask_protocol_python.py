@@ -14,7 +14,7 @@ SHM_NAME = "/pii_mask"
 MAGIC = 0x50494D53  # "PIMS"
 VERSION = 1
 MAX_RECTS = 32
-SHM_SIZE = 808
+SHM_SIZE = 800
 
 FLAG_DAEMON_ALIVE = 1 << 0
 FLAG_FULL_MASK = 1 << 1
@@ -47,7 +47,7 @@ class PiiMaskShm(ctypes.Structure):
 
 
 assert ctypes.sizeof(PiiMaskRect) == 24, f"rect size: {ctypes.sizeof(PiiMaskRect)}"
-assert ctypes.sizeof(PiiMaskShm) == 808, f"shm size: {ctypes.sizeof(PiiMaskShm)}"
+assert ctypes.sizeof(PiiMaskShm) == 800, f"shm size: {ctypes.sizeof(PiiMaskShm)}"
 
 
 class PiiMaskWriter:
@@ -122,6 +122,7 @@ class PiiMaskWriter:
         """Clean up shared memory."""
         if self._shm:
             self._shm.flags = 0  # clear daemon alive
+            self._shm = None
         if self._sm:
-            self._sm.close()
             self._sm.unlink()
+            self._sm.close()

@@ -36,7 +36,7 @@ typedef struct {
 } pii_mask_shm_t;
 
 _Static_assert(sizeof(pii_mask_rect_t) == 24, "rect must be 24 bytes");
-_Static_assert(sizeof(pii_mask_shm_t) == 808, "shm must be 808 bytes");
+_Static_assert(sizeof(pii_mask_shm_t) == 800, "shm must be 800 bytes");
 
 /* --- Seqlock reader (plugin side) --- */
 
