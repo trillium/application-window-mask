@@ -43,7 +43,7 @@ if(APPLE)
         ${CMAKE_CURRENT_SOURCE_DIR}/data/pixelate.effect
     )
     set_source_files_properties(${EFFECT_FILES} PROPERTIES
-        MACOSX_PACKAGE_LOCATION "Resources/data"
+        MACOSX_PACKAGE_LOCATION "Resources"
     )
     target_sources(pii-mask-filter PRIVATE ${EFFECT_FILES})
 endif()
