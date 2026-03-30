@@ -46,22 +46,27 @@ class Classifier:
         Returns True if the window should be masked (unsafe).
 
         Rules evaluated in order:
-        1. Always-mask processes → unsafe
-        2. Layer > 0 → unsafe (overlays, notifications, popups)
-        3. Owner in safe list → safe
-        4. Everything else → unsafe
+        1. Negative layers → skip (desktop, wallpaper, backstop)
+        2. Always-mask processes → unsafe
+        3. Owner in safe list → safe (even overlays from safe apps)
+        4. Layer > 0 from unsafe apps → unsafe
+        5. Everything else → unsafe
         """
-        # Rule 1: always-mask processes
+        # Rule 1: negative layers are below desktop — never mask
+        if layer < 0:
+            return False
+
+        # Rule 2: always-mask processes
         if owner in self._always_mask:
             return True
 
-        # Rule 2: overlays and popups
-        if layer > 0:
-            return True
-
-        # Rule 3: safe list
+        # Rule 3: safe list (safe apps' overlays are also safe)
         if owner in self._safe_owners:
             return False
 
-        # Rule 4: default deny
+        # Rule 4: overlays from unknown apps
+        if layer > 0:
+            return True
+
+        # Rule 5: default deny
         return True
