@@ -1,0 +1,62 @@
+/* Dual Kawase upsample pass.
+ * Samples 8 neighbors in diamond+cross pattern, averages them.
+ * Output is double resolution of input. */
+
+uniform float4x4 ViewProj;
+uniform texture2d image;
+uniform float2 texel_size;  /* 1.0 / input_resolution */
+
+sampler_state linear_clamp {
+	Filter   = Linear;
+	AddressU = Clamp;
+	AddressV = Clamp;
+};
+
+struct VertIn {
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+struct VertOut {
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+VertOut VSDefault(VertIn v)
+{
+	VertOut o;
+	o.pos = mul(float4(v.pos.xyz, 1.0), ViewProj);
+	o.uv  = v.uv;
+	return o;
+}
+
+float4 PSUpsample(VertOut v) : TARGET
+{
+	float2 uv = v.uv;
+	float2 ht = texel_size * 0.5;
+	float2 ft = texel_size;
+
+	/* Diamond pattern (weight 2 each) */
+	float4 sum = float4(0.0, 0.0, 0.0, 0.0);
+	sum += image.Sample(linear_clamp, uv + float2(-ht.x, -ht.y)) * 2.0;
+	sum += image.Sample(linear_clamp, uv + float2( ht.x, -ht.y)) * 2.0;
+	sum += image.Sample(linear_clamp, uv + float2(-ht.x,  ht.y)) * 2.0;
+	sum += image.Sample(linear_clamp, uv + float2( ht.x,  ht.y)) * 2.0;
+
+	/* Cross pattern (weight 1 each) */
+	sum += image.Sample(linear_clamp, uv + float2(0.0, -ft.y));
+	sum += image.Sample(linear_clamp, uv + float2(0.0,  ft.y));
+	sum += image.Sample(linear_clamp, uv + float2(-ft.x, 0.0));
+	sum += image.Sample(linear_clamp, uv + float2( ft.x, 0.0));
+
+	return sum / 12.0;
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v);
+		pixel_shader  = PSUpsample(v);
+	}
+}
