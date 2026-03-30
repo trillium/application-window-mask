@@ -1,0 +1,49 @@
+/* Pixelation effect.
+ * Snaps UV coordinates to a grid, producing blocky pixel art look.
+ * block_size is in pixels. */
+
+uniform float4x4 ViewProj;
+uniform texture2d image;
+uniform float2 resolution;   /* source dimensions */
+uniform float block_size;     /* pixel block size */
+
+sampler_state linear_clamp {
+	Filter   = Linear;
+	AddressU = Clamp;
+	AddressV = Clamp;
+};
+
+struct VertIn {
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+struct VertOut {
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+VertOut VSDefault(VertIn v)
+{
+	VertOut o;
+	o.pos = mul(float4(v.pos.xyz, 1.0), ViewProj);
+	o.uv  = v.uv;
+	return o;
+}
+
+float4 PSPixelate(VertOut v) : TARGET
+{
+	float2 px = v.uv * resolution;
+	float2 snapped = floor(px / block_size) * block_size + block_size * 0.5;
+	float2 uv_snapped = snapped / resolution;
+	return image.Sample(linear_clamp, uv_snapped);
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v);
+		pixel_shader  = PSPixelate(v);
+	}
+}
