@@ -14,16 +14,21 @@ from window_poller import WindowPoller
 from classifier import Classifier
 from scene_model import SceneModel
 from occlusion import compute_visible_unsafe
+from config_loader import ConfigWatcher
 
 
 def main():
     poll_hz = 30
     poll_interval = 1.0 / poll_hz
 
-    classifier = Classifier()
+    config_watcher = ConfigWatcher()
+    cfg = config_watcher.config
+    classifier = Classifier(allow=cfg["allow"], always_mask=cfg["always_mask"])
     poller = WindowPoller()
     model = SceneModel()
     writer = ShmWriter()
+    print(f"Config: {len(cfg['allow'])} allowed, "
+          f"{len(cfg['always_mask'])} always-masked")
 
     # Get screen dimensions for coordinate scaling
     from Quartz import CGMainDisplayID, CGDisplayPixelsWide, CGDisplayPixelsHigh
@@ -57,6 +62,13 @@ def main():
     try:
         while running:
             loop_start = time.perf_counter()
+
+            # Hot-reload config if file changed
+            new_cfg = config_watcher.check()
+            if new_cfg:
+                classifier.update_lists(new_cfg["allow"], new_cfg["always_mask"])
+                print(f"Config reloaded: {len(new_cfg['allow'])} allowed, "
+                      f"{len(new_cfg['always_mask'])} always-masked")
 
             # Poll all on-screen windows
             t0 = time.perf_counter()

@@ -1,152 +1,253 @@
 # PII Mask
 
-A privacy filter system for live streaming that dynamically generates image masks to hide
-personally identifying information (PII) on screen. The mask is consumed by OBS Studio's
-**Image Mask/Blend** filter to selectively blur or block regions of the display capture.
+Real-time privacy masking for OBS Studio. Automatically blurs, pixelates, or
+blacks out windows from apps you haven't explicitly marked as safe — so you can
+stream freely without leaking email, messages, banking, or anything else.
 
-## Project Aim
+**Default-deny:** only apps on your allow list are visible. Everything else is
+masked. If the daemon crashes, the entire screen masks (fail-closed).
 
-When streaming a desktop, not every application is safe to show. Email clients, messaging
-apps, banking sites, and other windows can expose PII to viewers. This system solves that
-by maintaining a real-time mask image that tells OBS which parts of the screen to reveal
-and which to hide, keyed off which application currently has focus.
-
-The goal is a streaming setup where the streamer can freely switch between apps and the
-audience only ever sees content from applications explicitly marked as safe.
-
-## How It Works Today
-
-The current implementation lives across two systems:
-
-### 1. Talon (mask generator + event source)
-
-Located in `~/.talon/user/trillium_obs/`. Talon is the voice control framework that also
-serves as the event bus for window focus changes.
-
-**Pipeline:**
+## How it works
 
 ```
-App switch detected (cmd-tab, voice command, or focus change)
-    |
-    v
-Check app name against SAFE_APPS list
-    |
-    +-- Safe app   --> mask color = black (reveal)
-    +-- Unsafe app --> mask color = white (hide)
-    |
-    v
-HTTP POST to OBS listener: blur the stream immediately
-    |
-    v
-Generate/update mask PNG via ffmpeg drawbox commands
-    |
-    v
-HTTP POST to OBS listener: switch to partial-mask scene
-    |
-    v
-OBS reads updated mask PNG --> audience sees filtered view
+┌─────────────────────┐         ┌──────────────────────┐
+│  pii-mask daemon    │   shm   │  OBS plugin          │
+│  (Swift)            │────────>│  (C, runs in OBS)    │
+│                     │ 800B    │                      │
+│  polls windows      │ seqlock │  reads mask rects    │
+│  classifies safe/   │         │  composites clear +  │
+│   unsafe            │         │   obfuscated frames  │
+│  computes occlusion │         │  via SDF shader      │
+│  writes mask rects  │         │                      │
+└─────────────────────┘         └──────────────────────┘
+        ▲                                ▲
+        │ hot-reload                     │ filter on
+        │                                │ Display Capture
+~/.config/pii-mask/apps.toml         OBS Studio
 ```
 
-**Key files:**
+**Daemon** monitors all on-screen windows via CoreGraphics, classifies them
+against your allow list, computes z-order occlusion (only masks visible unsafe
+regions), and writes up to 32 mask rectangles to POSIX shared memory.
 
-| File | Role |
-|------|------|
-| `config.py` | Safe app list, mask file path, color constants |
-| `streaming/create_safety_mask.py` | ffmpeg-based mask PNG generation |
-| `streaming/streaming.py` | App safety checks, mask color logic |
-| `streaming/obs_scene_change.py` | HTTP calls to OBS listener for scene switching |
-| `streaming/urllib_request.py` | HTTP utility for OBS listener communication |
-| `window_management/app_switcher.py` | App switch orchestration with mask coordination |
-| `streaming/keyboard_blurr_on_window_change.talon` | Passive safety net: blurs on cmd-tab/cmd-` |
-| `streaming/focus_streaming.talon` | Voice commands for manual mask control |
-| `streaming/box_border.py` | Visual border overlay for debug (disabled) |
-| `streaming/wip_testing_file.py` | Benchmarks and experimental mask approaches |
+**Plugin** reads the shared memory every frame via a lock-free seqlock, then
+composites the clear capture with an obfuscated version using an SDF rounded-
+rectangle shader. No image files, no HTTP, no ffmpeg — pure GPU pipeline.
 
-### 2. OBS Listener (scene coordinator)
+## System requirements
 
-Located in `obs-listener/` in this repo. A Next.js WebSocket server that bridges Talon
-commands to OBS Studio via obs-websocket.
+- **macOS 13 (Ventura)** or later (CoreGraphics + Swift concurrency APIs)
+- **OBS Studio 30+** (tested on 30.x, uses `gs_texrender` + effect API)
+- **Screen Recording permission** for the daemon binary (System Settings →
+  Privacy & Security → Screen Recording)
+- **Accessibility permission** for event-driven window monitoring (AXObserver;
+  System Settings → Privacy & Security → Accessibility)
+- **Swift 5.9+** toolchain (Xcode 15+ or standalone; for building the daemon)
+- **CMake 3.20+** (for building the OBS plugin; needs OBS source headers)
+- **Apple Silicon or Intel Mac** (universal binary, both architectures supported)
 
-**Responsibilities:**
-- Receives HTTP POST with `{safeToDisplay: bool}` from Talon
-- Switches OBS between blurry (safe) and clear (unsafe) scenes
-- Categorizes scenes by name: contains "BLURRY" = safe scene
-- Fails safe: defaults to blurred/masked state on any error
+### Runtime dependencies
 
-**Key files:**
+| Component | Runs as | CPU cost |
+|-----------|---------|----------|
+| Daemon | Background process (launchd) | ~31ms/s at 5Hz polling |
+| Plugin | OBS filter on Display Capture | ~260µs/frame GPU |
 
-| File | Role |
-|------|------|
-| `src/app/api/obs-scene-safety/route.ts` | REST API for blur state |
-| `src/lib/websocket-proxy/state/blur-state.ts` | Blur state queries and mutations |
-| `src/lib/websocket-proxy/state/scene-cache.ts` | Scene categorization (blurry vs clear) |
-| `src/lib/websocket-proxy/state/switch-scene.ts` | Scene switching with smart defaults |
+No Python runtime needed. No external services. No network calls.
 
-### 3. OBS Studio (consumer)
+## Quick start
 
-OBS has an **Image Mask/Blend** filter (`mask_filter_v2`) on display capture sources. This
-filter reads `~/Downloads/left_mask.png` and uses it to control visibility:
+### 1. Build the daemon
 
-- **Black pixels** = visible (audience can see)
-- **White pixels** = masked (audience sees blur/nothing)
-
-The mask file is regenerated by Talon whenever the active window changes.
-
-## Safe Apps List (current)
-
-```
-Code, Google Chrome, OBS Studio, RODE Connect, Talon, Terminal, Slack, System Settings
+```bash
+cd pii_mask/daemon/daemon_swift
+swift build -c release
 ```
 
-Everything else is considered unsafe and gets masked.
+### 2. Build the OBS plugin
 
-## Known Issues
+```bash
+cd pii_mask/plugin/plugin_c
+mkdir -p build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make
+# Installs to ~/Library/Application Support/obs-studio/plugins/
+make install
+```
 
-1. **SIGABRT on mask draw** -- `app_switcher.py` has direct `draw_rect_over_image_in_place()`
-   calls disabled because blocking ffmpeg subprocess calls during Talon's UI event handling
-   cause crashes. The mask drawing needs to happen asynchronously.
+### 3. Start the daemon
 
-2. **Latency gap** -- Between app switch and mask update, there's a brief window where
-   content could be visible. The system mitigates this by blurring the entire stream first,
-   then updating the mask, then switching to the partial-mask scene.
+```bash
+.build/release/PiiMaskDaemon
+```
 
-3. **Single monitor assumption** -- The mask path is hardcoded to `left_mask.png`. Multi-
-   monitor setups would need per-display masks.
+Or install as a launchd user agent for auto-start:
 
-4. **Static safe list** -- The safe/unsafe determination is a hardcoded list of app names.
-   No runtime learning or per-window-title granularity.
+```bash
+cp install/com.trillium.pii-mask-daemon.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.trillium.pii-mask-daemon.plist
+```
 
-5. **ffmpeg overhead** -- Each mask update spawns an ffmpeg subprocess. At ~20ms per draw
-   this is acceptable for app switches but won't scale to continuous updates.
+### 4. Add the filter in OBS
 
-## Scope for Development
+1. Right-click your Display Capture source → **Filters**
+2. Click **+** → **PII Mask**
+3. Choose obfuscation method: **Blur**, **Pixelate**, or **Solid black**
+4. Status should show "Connected — N mask rects"
 
-This `pii_mask/` directory is where we'll build the next iteration of the mask generation
-system. The aim is to move mask generation out of Talon user scripts and into a standalone,
-testable service that can:
+## Managing safe apps
 
-- **Generate masks** from window geometry + safety classification
-- **Receive events** from Talon (or any event source) about window focus changes
-- **Update masks asynchronously** without blocking the event source
-- **Support multiple monitors** with independent mask files
-- **Provide a configuration API** for managing the safe/unsafe app list
-- **Handle edge cases** like overlapping windows, floating panels, and notifications
+The `pii` CLI manages which apps are shown on stream:
 
-The OBS listener and OBS filter configuration remain as-is -- this project replaces only
-the mask generation layer.
+```bash
+pii show          # see all on-screen windows with classification
+pii allow Discord # add to safe list
+pii deny Slack    # remove from safe list (always mask)
+pii list          # show current config
+```
 
-## Architecture (target)
+Config lives at `~/.config/pii-mask/apps.toml`. The daemon hot-reloads on save
+— no restart needed. You can also send `SIGHUP` to force a reload.
+
+### Default allow list
 
 ```
-Event Source (Talon, accessibility API, etc.)
-    |
-    v
-pii_mask service (this project)
-    |-- receives window focus/geometry events
-    |-- maintains safe/unsafe app registry
-    |-- generates mask PNGs via efficient image ops
-    |-- writes mask files to configured paths
-    |
-    v
-OBS Image Mask/Blend filter reads updated PNG
+Code, Google Chrome, OBS, OBS Studio, RODE Connect, Talon,
+Terminal, iTerm2, Slack, System Settings, System Preferences, Finder
 ```
+
+Everything else is masked. `Notification Center` and `SecurityAgent` are always
+masked regardless of the allow list.
+
+### Talon voice integration
+
+Shell out to `pii` from Talon voice commands:
+
+```talon
+stream allow discord: user.run_shell("pii allow Discord")
+stream deny slack:    user.run_shell("pii deny Slack")
+stream show apps:     user.run_shell("pii show")
+```
+
+## Architecture
+
+### Daemon pipeline (per frame)
+
+1. **Poll** — `CGWindowListCopyWindowInfo` enumerates all on-screen windows
+2. **Classify** — check each window's owner against allow/always-mask sets
+3. **Occlude** — walk windows front-to-back, subtract safe coverage from unsafe
+   regions, emit only the visible unsafe portions
+4. **Clip** — clip rects to screen bounds, drop sub-pixel fragments
+5. **Write** — if scene changed, write rects to shm via seqlock; otherwise
+   heartbeat (timestamp only)
+
+### Event-driven monitoring
+
+The daemon doesn't just poll at 30Hz. It uses macOS event sources for low-
+latency response:
+
+- **NSWorkspace notifications** — app activation, launch, termination
+- **AXObserver** — window move, resize, create, destroy, minimize
+- **5Hz fallback timer** — catches overlays, notifications, Spotlight
+
+Events are coalesced within a 16ms window to prevent floods during window drags.
+
+### Shared memory protocol
+
+800-byte POSIX shared memory segment (`/pii_mask`):
+
+| Offset | Size | Field |
+|--------|------|-------|
+| 0 | 4 | Magic (`0x50494D53` = "PIMS") |
+| 4 | 4 | Version (1) |
+| 8 | 4 | Sequence (seqlock counter, atomic) |
+| 12 | 4 | Rect count (0–32) |
+| 16 | 8 | Timestamp (ns, CLOCK_REALTIME) |
+| 24 | 4 | Flags (bit 0: alive, bit 1: full mask) |
+| 28 | 2+2 | Screen width + height (uint16) |
+| 32 | 768 | 32 × 24-byte rects (x/y/w/h/radius as float + flags as uint32) |
+
+**Seqlock protocol:** writer increments sequence to odd before writing, even
+after. Reader skips if odd (mid-write) and retries if sequence changed (torn
+read). Lock-free, wait-free on the reader side.
+
+**Staleness:** plugin checks timestamp every frame. If older than 5 seconds,
+daemon is presumed dead and the plugin falls back to full-screen masking
+(fail-closed).
+
+### GPU pipeline (plugin)
+
+1. **Capture** — render source to `gs_texrender_t` (clear frame)
+2. **Obfuscate** — apply selected method to clear frame:
+   - Dual Kawase blur (1–6 levels, downsample/upsample pyramid)
+   - Pixelation (configurable block size 2–64px)
+   - Solid black
+3. **Composite** — SDF shader blends clear + obfuscated per-pixel:
+   `output = lerp(clear, obfuscated, sdf_mask_alpha)`
+   with smoothstep anti-aliasing at rect edges
+
+Rect data is uploaded as a 1D RGBA32F texture (2 texels per rect). Coordinates
+are scaled from daemon screen space to OBS output resolution.
+
+## Project structure
+
+```
+pii_mask/
+├── daemon/
+│   ├── daemon_swift/        ← Swift daemon (current)
+│   │   ├── Package.swift
+│   │   └── Sources/
+│   │       ├── PiiMaskDaemon/   main, poller, classifier, occlusion,
+│   │       │                    scene model, shm writer, config, events
+│   │       └── CSeqlock/        C interop for atomic seqlock ops
+│   └── daemon_python/       ← Python daemon (original, deprecated)
+├── plugin/
+│   └── plugin_c/            ← OBS plugin (C)
+│       ├── pii_mask_filter.c    main filter: tick, render, properties
+│       ├── shm_reader.c         shared memory reader + seqlock
+│       ├── mask_renderer.c      SDF composite shader driver
+│       ├── rect_texture.c       rect data → GPU texture upload
+│       ├── blur_kawase.c        dual Kawase blur pipeline
+│       └── data/*.effect        GLSL/HLSL shader effects
+├── protocol/
+│   ├── pii_mask_protocol_c.h       canonical struct layout (800 bytes)
+│   ├── pii_mask_protocol_python.py  Python reader/writer
+│   └── pii_mask_protocol_swift.swift  Swift reader/writer (needs update)
+├── cli/
+│   └── pii                  ← CLI tool for managing safe apps
+├── config/
+│   └── config.toml          ← reference config (design artifact)
+├── talon_shim/              ← Talon voice command integration
+└── failsafe/                ← fail-closed safety logic
+```
+
+## Performance
+
+Benchmarked on M3 MacBook Pro, ~55 on-screen windows:
+
+| Metric | Python daemon (30Hz) | Swift daemon (5Hz + events) |
+|--------|---------------------|-----------------------------|
+| Poll avg | 11.8ms | 6.1ms |
+| Poll p99 | 41ms | 16ms |
+| CPU per second | 354ms/s | 31ms/s |
+| Memory | ~42MB (Python RSS) | ~5MB |
+| Plugin GPU/frame | 260µs | 260µs (unchanged) |
+
+The bottleneck is `CGWindowListCopyWindowInfo` itself — irreducible at ~6ms for
+55 windows. The Swift rewrite eliminated PyObjC bridging overhead (1.9x) and
+the event-driven architecture reduced poll rate from 30Hz to 5Hz (6x), for a
+combined **11.4x reduction** in CPU cost.
+
+## Safety invariants
+
+1. **Default-deny** — unlisted apps are masked
+2. **Fail-closed** — daemon crash → full screen mask (5s staleness timeout)
+3. **Startup mask** — daemon writes full mask before first poll
+4. **Always-mask list** — some processes (notifications, auth dialogs) are
+   masked regardless of allow list
+5. **No shm_unlink on shutdown** — plugin mmap stays valid across daemon
+   restarts
+
+## License
+
+MIT — see [LICENSE](LICENSE).

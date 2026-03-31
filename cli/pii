@@ -1,0 +1,156 @@
+#!/usr/bin/env python3
+"""
+pii — manage PII mask app classification.
+
+Usage:
+    pii allow <name>       Add app to safe list (by process name or bundle ID)
+    pii deny <name>        Remove app from safe list
+    pii list               Show current allow/deny lists
+    pii show               Show on-screen windows with classification
+"""
+
+import sys
+import os
+
+# Add daemon dir for config_loader import — resolve symlinks first
+_script_dir = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, os.path.join(_script_dir,
+                                "..", "daemon", "daemon_python"))
+
+from config_loader import load_config, save_config, CONFIG_PATH
+
+
+def cmd_allow(name: str) -> None:
+    cfg = load_config()
+    allow = cfg["allow"]
+    always_mask = cfg["always_mask"]
+
+    # Remove from always_mask if present
+    always_mask.discard(name)
+    allow.add(name)
+
+    save_config(sorted(allow), sorted(always_mask))
+    print(f"✓ {name} → allowed")
+
+
+def cmd_deny(name: str) -> None:
+    cfg = load_config()
+    allow = cfg["allow"]
+    always_mask = cfg["always_mask"]
+
+    allow.discard(name)
+    # Add to always_mask so it's explicitly denied even if re-added later
+    always_mask.add(name)
+
+    save_config(sorted(allow), sorted(always_mask))
+    print(f"✓ {name} → denied (always masked)")
+
+
+def cmd_list() -> None:
+    cfg = load_config()
+    print(f"Config: {CONFIG_PATH}\n")
+
+    print("ALLOWED (shown on stream):")
+    for name in sorted(cfg["allow"]):
+        print(f"  + {name}")
+
+    print("\nALWAYS MASKED:")
+    for name in sorted(cfg["always_mask"]):
+        print(f"  - {name}")
+
+    print(f"\nEverything else: masked (default-deny)")
+
+
+def cmd_show() -> None:
+    """Show on-screen windows with their classification."""
+    try:
+        from Quartz import (
+            CGWindowListCopyWindowInfo,
+            kCGWindowListOptionOnScreenOnly,
+            kCGNullWindowID,
+            kCGWindowBounds,
+            kCGWindowLayer,
+            kCGWindowOwnerName,
+            kCGWindowOwnerPID,
+            kCGWindowName,
+        )
+    except ImportError:
+        print("Error: PyObjC (Quartz) required for 'pii show'")
+        sys.exit(1)
+
+    from classifier import Classifier
+
+    cfg = load_config()
+    classifier = Classifier(allow=cfg["allow"], always_mask=cfg["always_mask"])
+
+    window_list = CGWindowListCopyWindowInfo(
+        kCGWindowListOptionOnScreenOnly, kCGNullWindowID
+    )
+
+    if not window_list:
+        print("No windows found")
+        return
+
+    # Collect unique apps with their classification
+    # Only classify normal-layer (0) windows — same as the daemon
+    apps = {}
+    for w in window_list:
+        owner = w.get(kCGWindowOwnerName, "")
+        if not owner:
+            continue
+        layer = w.get(kCGWindowLayer, 0)
+        title = w.get(kCGWindowName, "") or ""
+
+        unsafe = classifier.is_unsafe(owner=owner, title=title, layer=layer)
+
+        if owner not in apps:
+            apps[owner] = {"unsafe": unsafe, "windows": 0, "normal": layer == 0}
+        apps[owner]["windows"] += 1
+        if layer == 0:
+            apps[owner]["normal"] = True
+
+    print(f"{'STATUS':<8} {'APP':<30} {'WINDOWS':>7}  NOTE")
+    print("-" * 58)
+    for owner in sorted(apps):
+        info = apps[owner]
+        if not info["normal"]:
+            # System-level window, not processed by daemon
+            marker = "·"
+            status = "SYS"
+            note = "(non-zero layer, ignored)"
+        elif info["unsafe"]:
+            marker = "●"
+            status = "MASK"
+            note = ""
+        else:
+            marker = "○"
+            status = "SHOW"
+            note = ""
+        print(f"{marker} {status:<5}  {owner:<30} {info['windows']:>5}  {note}")
+
+
+def usage():
+    print(__doc__.strip())
+    sys.exit(1)
+
+
+def main():
+    if len(sys.argv) < 2:
+        usage()
+
+    cmd = sys.argv[1]
+
+    if cmd == "allow" and len(sys.argv) >= 3:
+        cmd_allow(" ".join(sys.argv[2:]))
+    elif cmd == "deny" and len(sys.argv) >= 3:
+        cmd_deny(" ".join(sys.argv[2:]))
+    elif cmd == "list":
+        cmd_list()
+    elif cmd == "show":
+        cmd_show()
+    else:
+        usage()
+
+
+if __name__ == "__main__":
+    main()

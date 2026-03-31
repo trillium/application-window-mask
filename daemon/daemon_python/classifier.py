@@ -2,38 +2,24 @@
 Classifies windows as safe or unsafe based on owner name and layer.
 
 Default-deny: everything is unsafe unless explicitly listed as safe.
+App lists loaded from ~/.config/pii-mask/apps.toml (hot-reloadable).
 """
-
-# Safe apps — windows from these processes are revealed on stream.
-# Everything else is masked.
-SAFE_OWNERS = {
-    "Code",
-    "Google Chrome",
-    "OBS",
-    "OBS Studio",
-    "RODE Connect",
-    "Talon",
-    "Terminal",
-    "iTerm2",
-    "Slack",
-    "System Settings",
-    "System Preferences",
-    "Finder",
-}
-
-# Always mask windows from these processes, even if in SAFE_OWNERS.
-ALWAYS_MASK_OWNERS = {
-    "NotificationCenter",
-    "SecurityAgent",
-}
 
 
 class Classifier:
     """Determines whether a window should be masked."""
 
-    def __init__(self):
-        self._safe_owners = SAFE_OWNERS
-        self._always_mask = ALWAYS_MASK_OWNERS
+    def __init__(self, allow: set[str] | None = None,
+                 always_mask: set[str] | None = None):
+        from config_loader import DEFAULT_ALLOW, DEFAULT_ALWAYS_MASK
+        self._safe_owners = allow if allow is not None else set(DEFAULT_ALLOW)
+        self._always_mask = (always_mask if always_mask is not None
+                             else set(DEFAULT_ALWAYS_MASK))
+
+    def update_lists(self, allow: set[str], always_mask: set[str]) -> None:
+        """Hot-reload: swap in new app lists."""
+        self._safe_owners = allow
+        self._always_mask = always_mask
 
     def is_unsafe(
         self,
