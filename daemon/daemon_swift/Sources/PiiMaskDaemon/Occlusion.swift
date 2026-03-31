@@ -4,10 +4,10 @@
 /// by safe windows. Only emits mask rects for unsafe window regions that
 /// are actually visible (not hidden behind safe windows).
 
-typealias Rect = (x: Float, y: Float, w: Float, h: Float)
+public typealias Rect = (x: Float, y: Float, w: Float, h: Float)
 
 /// Subtract rect `b` from rect `a`. Returns 0-4 remainder rects.
-func subtractRect(_ a: Rect, _ b: Rect) -> [Rect] {
+public func subtractRect(_ a: Rect, _ b: Rect) -> [Rect] {
     // Compute overlap
     let ox1 = max(a.x, b.x)
     let oy1 = max(a.y, b.y)
@@ -41,7 +41,7 @@ func subtractRect(_ a: Rect, _ b: Rect) -> [Rect] {
 }
 
 /// Subtract a region (list of rects) from a single rect.
-func subtractRegion(_ rect: Rect, _ region: [Rect]) -> [Rect] {
+public func subtractRegion(_ rect: Rect, _ region: [Rect]) -> [Rect] {
     var fragments = [rect]
     for coverRect in region {
         var newFragments: [Rect] = []
@@ -54,17 +54,25 @@ func subtractRegion(_ rect: Rect, _ region: [Rect]) -> [Rect] {
     return fragments
 }
 
-struct ClassifiedWindow {
-    let x: Float
-    let y: Float
-    let width: Float
-    let height: Float
-    let unsafe: Bool
+public struct ClassifiedWindow {
+    public let x: Float
+    public let y: Float
+    public let width: Float
+    public let height: Float
+    public let unsafe: Bool
+
+    public init(x: Float, y: Float, width: Float, height: Float, unsafe: Bool) {
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+        self.unsafe = unsafe
+    }
 }
 
 /// Given windows in front-to-back z-order, return rects where unsafe
 /// windows are the topmost visible layer.
-func computeVisibleUnsafe(_ windows: [ClassifiedWindow]) -> [Rect] {
+public func computeVisibleUnsafe(_ windows: [ClassifiedWindow]) -> [Rect] {
     var covered: [Rect] = []
     var unsafeRects: [Rect] = []
 
