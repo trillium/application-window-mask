@@ -12,10 +12,9 @@ Usage:
 import sys
 import os
 
-# Add daemon dir for config_loader import — resolve symlinks first
+# Add lib dir for shared imports — resolve symlinks first
 _script_dir = os.path.dirname(os.path.realpath(__file__))
-sys.path.insert(0, os.path.join(_script_dir,
-                                "..", "daemon", "daemon_python"))
+sys.path.insert(0, os.path.join(_script_dir, "..", "lib"))
 
 from config_loader import load_config, save_config, CONFIG_PATH
 
