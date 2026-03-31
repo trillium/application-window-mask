@@ -97,17 +97,105 @@ launchctl load ~/Library/LaunchAgents/com.trillium.pii-mask-daemon.plist
 
 ## Managing safe apps
 
-The `pii` CLI manages which apps are shown on stream:
+The system is **default-deny**: every application is masked unless you
+explicitly add it to the allow list. The `pii` CLI manages the list.
+
+### Seeing what's on screen
 
 ```bash
-pii show          # see all on-screen windows with classification
-pii allow Discord # add to safe list
-pii deny Slack    # remove from safe list (always mask)
-pii list          # show current config
+pii show
 ```
 
-Config lives at `~/.config/pii-mask/apps.toml`. The daemon hot-reloads on save
-— no restart needed. You can also send `SIGHUP` to force a reload.
+Shows every visible application with its current classification:
+
+```
+STATUS   APP                            WINDOWS  NOTE
+----------------------------------------------------------
+● MASK   Activity Monitor                   1
+○ SHOW   Code                              10
+· SYS    Control Center                    16  (non-zero layer, ignored)
+○ SHOW   Google Chrome                      1
+● MASK   Messages                           2
+○ SHOW   Terminal                           5
+```
+
+- `○ SHOW` — app is on the allow list, visible to viewers
+- `● MASK` — app is masked (blurred/pixelated/blacked out)
+- `· SYS` — system-level window (non-zero layer), ignored by the daemon
+
+### Adding an app to the safe list
+
+```bash
+pii allow Discord
+```
+
+The app is immediately visible on stream. The daemon picks up the change
+within one frame (~200ms at 5Hz). No restart needed.
+
+You can use either the **process name** (as shown by `pii show`) or a
+**bundle ID** (e.g. `com.tinyspeck.slackmacgap`):
+
+```bash
+pii allow "Google Chrome"    # process name (use quotes if spaces)
+pii allow com.google.Chrome  # bundle ID also works
+```
+
+### Removing an app from the safe list
+
+```bash
+pii deny Slack
+```
+
+The app is immediately masked. `deny` also adds the app to the **always-mask**
+list, which takes priority over the allow list — so even if someone adds it
+back to allow, it stays masked until explicitly re-allowed.
+
+To re-allow a previously denied app:
+
+```bash
+pii allow Slack    # removes from always-mask and adds to allow
+```
+
+### Viewing the current config
+
+```bash
+pii list
+```
+
+Shows both lists:
+
+```
+ALLOWED (shown on stream):
+  + Code
+  + Google Chrome
+  + Terminal
+
+ALWAYS MASKED:
+  - NotificationCenter
+  - SecurityAgent
+
+Everything else: masked (default-deny)
+```
+
+### Config file
+
+Config lives at `~/.config/pii-mask/apps.toml`:
+
+```toml
+allow = [
+    "Code",
+    "Google Chrome",
+    "Terminal",
+]
+
+always_mask = [
+    "NotificationCenter",
+    "SecurityAgent",
+]
+```
+
+You can edit this file directly — the daemon hot-reloads on save. You can also
+send `SIGHUP` to force a reload: `kill -HUP $(pgrep PiiMaskDaemon)`
 
 ### Default allow list
 
