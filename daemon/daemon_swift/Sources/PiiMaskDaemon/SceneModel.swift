@@ -5,9 +5,16 @@
 
 final class SceneModel {
     private var lastRects: [MaskRect] = []
+    private var firstUpdate = true
 
     /// Returns true if the rects changed (dirty), false if unchanged.
+    /// Always returns true on the first call to clear startup full-mask.
     func update(_ rects: [MaskRect]) -> Bool {
+        if firstUpdate {
+            firstUpdate = false
+            lastRects = rects
+            return true
+        }
         if rectsEqual(lastRects, rects) {
             return false
         }
