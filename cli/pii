@@ -7,6 +7,7 @@ Usage:
     pii deny <name>        Remove app from safe list
     pii list               Show current allow/deny lists
     pii show               Show on-screen windows with classification
+    pii diag               Diagnose daemon + shared memory health
 """
 
 import sys
@@ -128,6 +129,84 @@ def cmd_show() -> None:
         print(f"{marker} {status:<5}  {owner:<30} {info['windows']:>5}  {note}")
 
 
+def cmd_diag() -> None:
+    """Diagnose daemon + shared memory health."""
+    import ctypes
+    import ctypes.util
+    import mmap
+    import struct
+    import time
+
+    libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+    libc.shm_open.restype = ctypes.c_int
+    libc.shm_open.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.c_uint16]
+
+    fd = libc.shm_open(b"/pii_mask", os.O_RDONLY, 0o666)
+    if fd < 0:
+        errno = ctypes.get_errno()
+        print("SHM:      /pii_mask NOT FOUND")
+        print(f"          errno={errno} — daemon likely not running")
+        print()
+        _diag_process()
+        return
+
+    buf = mmap.mmap(fd, 800, mmap.MAP_SHARED, mmap.PROT_READ)
+    magic, version, seq, rect_count = struct.unpack_from("<IIII", buf, 0)
+    ts_ns, = struct.unpack_from("<Q", buf, 16)
+    flags, = struct.unpack_from("<I", buf, 24)
+    screen_w, screen_h = struct.unpack_from("<HH", buf, 28)
+    os.close(fd)
+
+    now_ns = time.time_ns()
+    age_ms = (now_ns - ts_ns) / 1_000_000
+    stale = age_ms > 5000
+
+    alive = bool(flags & 0x1)
+    full_mask = bool(flags & 0x2)
+
+    ok = "✓" if magic == 0x50494D53 else "✗"
+    print(f"SHM:      /pii_mask found")
+    print(f"Magic:    {ok} 0x{magic:08X} {'(valid)' if magic == 0x50494D53 else '(INVALID — expect 0x50494D53)'}")
+    print(f"Version:  {version}")
+    print(f"Sequence: {seq}")
+    print(f"Screen:   {screen_w}x{screen_h}")
+    print()
+
+    ok = "✓" if alive else "✗"
+    print(f"Daemon:   {ok} {'alive' if alive else 'NOT alive'}")
+    print(f"Age:      {age_ms:.0f}ms {'(STALE — >5s)' if stale else '(fresh)'}")
+
+    fm = "✗ ON — entire screen masked!" if full_mask else "✓ off"
+    print(f"FullMask: {fm}")
+    print(f"Rects:    {rect_count}")
+
+    if rect_count > 0:
+        print()
+        for i in range(min(rect_count, 32)):
+            off = 32 + i * 24
+            x, y, w, h, cr, rf = struct.unpack_from("<fffffi", buf, off)
+            unsafe = bool(rf & 1)
+            print(f"  [{i:2d}] {x:.0f},{y:.0f} {w:.0f}x{h:.0f}  {'UNSAFE' if unsafe else 'safe'}")
+
+    print()
+    _diag_process()
+
+
+def _diag_process() -> None:
+    """Check if the daemon process is running."""
+    import subprocess
+    result = subprocess.run(
+        ["pgrep", "-fl", "PiiMaskDaemon"],
+        capture_output=True, text=True,
+    )
+    if result.stdout.strip():
+        print(f"Process:  ✓ running")
+        for line in result.stdout.strip().splitlines():
+            print(f"          {line}")
+    else:
+        print("Process:  ✗ PiiMaskDaemon not found")
+
+
 def usage():
     print(__doc__.strip())
     sys.exit(1)
@@ -147,6 +226,8 @@ def main():
         cmd_list()
     elif cmd == "show":
         cmd_show()
+    elif cmd == "diag":
+        cmd_diag()
     else:
         usage()
 
